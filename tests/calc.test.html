@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hours Tracker — calc.js Tests</title>
+  <style>
+    body { font-family: monospace; background: #FFFDF5; color: #000; padding: 24px; max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; font-weight: 700; text-transform: uppercase; margin-bottom: 24px; border-bottom: 4px solid #000; padding-bottom: 8px; }
+    .test { border: 3px solid #000; box-shadow: 4px 4px 0 #000; padding: 12px 16px; margin-bottom: 12px; }
+    .pass { background: #7CFFB2; }
+    .fail { background: #FF5C5C; }
+    .test-label { font-weight: 700; font-size: 0.9rem; }
+    .test-detail { font-size: 0.8rem; margin-top: 4px; opacity: 0.8; }
+    .summary { font-size: 1.2rem; font-weight: 700; padding: 16px; border: 4px solid #000; box-shadow: 6px 6px 0 #000; margin-top: 24px; }
+    .summary.all-pass { background: #7CFFB2; }
+    .summary.some-fail { background: #FF5C5C; }
+  </style>
+</head>
+<body>
+  <h1>calc.js Test Suite</h1>
+  <div id="results"></div>
+  <div id="summary" class="summary"></div>
+
+  <script type="module">
+    import {
+      weekStart, weekEnd,
+      activeDaySet, activeDaysInRange,
+      splitSessionByDay, workedHoursByDay,
+      rangeStats, allWeeks, allMonths,
+      jobFirstDay, jobLastDay
+    } from '../js/calc.js';
+
+    const results = [];
+
+    function approx(a, b, epsilon = 0.0001) {
+      return Math.abs(a - b) < epsilon;
+    }
+
+    function test(name, fn) {
+      try {
+        const result = fn();
+        if (result === true) {
+          results.push({ pass: true, name });
+        } else {
+          results.push({ pass: false, name, detail: `Expected true, got: ${JSON.stringify(result)}` });
+        }
+      } catch (e) {
+        results.push({ pass: false, name, detail: e.message });
+      }
+    }
+
+    // ── Helper: make a job ─────────────────────────────────────────────────
+    function makeJob(weeklyHours, periods) {
+      return {
+        id: 'test',
+        name: 'Test Job',
+        weeklyHours,
+        status: periods[periods.length - 1].end === null ? 'active' : 'paused',
+        periods,
+        timer: null,
+        createdAt: '',
+        updatedAt: '',
+        deletedAt: null
+      };
+    }
+
+    const TODAY = '2026-11-09';  // Monday — does not affect these tests
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Section 4.2 required test cases
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Test 1: Fully active week (period covers Sun–Sat) → required = 14
+    test('TC1: Fully active week → required = 14h', () => {
+      const job = makeJob(14, [{ start: '2026-11-08', end: '2026-11-14' }]);
+      const stats = rangeStats(job, [], '2026-11-08', '2026-11-14', TODAY);
+      return approx(stats.requiredHours, 14);
+    });
+
+    // Test 2: Period starts Wednesday 2026-11-11 (open) → active days Wed–Sat = 4 → required = 8
+    test('TC2: Period starts Wednesday → 4 active days → required = 8h', () => {
+      const job = makeJob(14, [{ start: '2026-11-11', end: null }]);
+      const stats = rangeStats(job, [], '2026-11-08', '2026-11-14', '2026-11-14');
+      return approx(stats.requiredHours, 8) && stats.activeDays === 4;
+    });
+
+    // Test 3: Period 2026-11-08 → 2026-11-10 (Sun–Tue), then paused → 3 active days → required = 6
+    test('TC3: Period Sun–Tue → 3 active days → required = 6h', () => {
+      const job = makeJob(14, [{ start: '2026-11-08', end: '2026-11-10' }]);
+      const stats = rangeStats(job, [], '2026-11-08', '2026-11-14', TODAY);
+      return approx(stats.requiredHours, 6) && stats.activeDays === 3;
+    });
+
+    // Test 4: Two periods in one week: Sun–Mon and Thu–Sat → 2 + 3 = 5 active days → required = 10
+    test('TC4: Two periods Sun–Mon and Thu–Sat → 5 active days → required = 10h', () => {
+      const job = makeJob(14, [
+        { start: '2026-11-08', end: '2026-11-09' },
+        { start: '2026-11-12', end: '2026-11-14' }
+      ]);
+      const stats = rangeStats(job, [], '2026-11-08', '2026-11-14', TODAY);
+      return approx(stats.requiredHours, 10) && stats.activeDays === 5;
+    });
+
+    // Test 5: Pause and resume on the same day → that day counted once
+    test('TC5: Pause and resume same day → day counted once', () => {
+      const job = makeJob(14, [
+        { start: '2026-11-08', end: '2026-11-10' },
+        { start: '2026-11-10', end: null }         // overlapping on Nov 10
+      ]);
+      // Nov 10 should be counted only once
+      const stats = rangeStats(job, [], '2026-11-08', '2026-11-14', '2026-11-14');
+      // Sun(8), Mon(9), Tue(10)[once], Wed(11), Thu(12), Fri(13), Sat(14) = 7 active days
+      return stats.activeDays === 7 && approx(stats.requiredHours, 14);
+    });
+
+    // Test 6: Month split — job fully active, week 2026-11-29 → 2026-12-05
+    // November gets 2 days (Nov 29, 30) = 4h, December gets 5 days (Dec 1–5) = 10h
+    test('TC6: Month split Nov/Dec — Nov=4h, Dec=10h', () => {
+      const job = makeJob(14, [{ start: '2026-11-29', end: '2026-12-05' }]);
+      const novStats = rangeStats(job, [], '2026-11-01', '2026-11-30', TODAY);
+      const decStats = rangeStats(job, [], '2026-12-01', '2026-12-31', TODAY);
+      return approx(novStats.requiredHours, 4) && approx(decStats.requiredHours, 10);
+    });
+
+    // Test 7: Session from 23:00 to 01:00 next day → 1h on first day, 1h on second day
+    test('TC7: Midnight-crossing session splits correctly', () => {
+      // 23:00 on Nov 8 → 01:00 on Nov 9 (UTC-agnostic: use local offsets)
+      // We'll compute using a fixed offset: construct ISO times in local tz
+      const d1 = new Date(2026, 10, 8, 23, 0, 0, 0); // Nov 8 23:00 local
+      const d2 = new Date(2026, 10, 9,  1, 0, 0, 0); // Nov 9 01:00 local
+      const segs = splitSessionByDay(d1.toISOString(), d2.toISOString());
+      return (
+        segs.length === 2 &&
+        approx(segs[0].hours, 1) &&
+        approx(segs[1].hours, 1)
+      );
+    });
+
+    // Test 8: Worked 16h in a 14h week → remaining = -2h, balance = +2h
+    test('TC8: Worked 16h in 14h week → remaining = -2h, balance = +2h', () => {
+      const job = makeJob(14, [{ start: '2026-11-08', end: '2026-11-14' }]);
+      // Create a session for 16h (Nov 8: 09:00 → Nov 9: 01:00)
+      const start = new Date(2026, 10, 8, 9, 0, 0).toISOString();
+      const end   = new Date(2026, 10, 9, 1, 0, 0).toISOString(); // 16h later
+      const sessions = [{ id: 's1', jobId: 'test', start, end, note: '', updatedAt: '', deletedAt: null }];
+      const stats = rangeStats(job, sessions, '2026-11-08', '2026-11-14', TODAY);
+      return approx(stats.remaining, -2) && approx(stats.balance, 2);
+    });
+
+    // Test 9: Whole-job total = sum of all weekly required; balance = worked − required
+    test('TC9: Whole-job totals are consistent', () => {
+      const job = makeJob(14, [{ start: '2026-11-08', end: '2026-11-21' }]); // 2 full weeks
+      const start = new Date(2026, 10, 8, 9, 0, 0).toISOString();
+      const end   = new Date(2026, 10, 8, 19, 0, 0).toISOString(); // 10h session
+      const sessions = [{ id: 's1', jobId: 'test', start, end, note: '', updatedAt: '', deletedAt: null }];
+      const stats = rangeStats(job, sessions, '2026-11-08', '2026-11-21', TODAY);
+      // 2 full weeks = 28h required, 10h worked
+      return (
+        approx(stats.requiredHours, 28) &&
+        approx(stats.workedHours, 10) &&
+        approx(stats.balance, -18) &&
+        approx(stats.remaining, 18)
+      );
+    });
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Extra edge-case tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    test('Edge: weekStart of Wednesday 2026-11-11 → 2026-11-08 (Sunday)', () => {
+      return weekStart('2026-11-11') === '2026-11-08';
+    });
+
+    test('Edge: weekEnd of Sunday 2026-11-08 → 2026-11-14 (Saturday)', () => {
+      return weekEnd('2026-11-08') === '2026-11-14';
+    });
+
+    test('Edge: activeDaySet with open period counts correctly up to today', () => {
+      const job = makeJob(14, [{ start: '2026-11-08', end: null }]);
+      const set = activeDaySet(job, '2026-11-10');
+      return set.has('2026-11-08') && set.has('2026-11-09') && set.has('2026-11-10') && !set.has('2026-11-11');
+    });
+
+    test('Edge: splitSessionByDay single-day session (no midnight cross)', () => {
+      const start = new Date(2026, 10, 8, 9, 0, 0).toISOString();
+      const end   = new Date(2026, 10, 8, 17, 0, 0).toISOString();
+      const segs = splitSessionByDay(start, end);
+      return segs.length === 1 && approx(segs[0].hours, 8);
+    });
+
+    test('Edge: zero-duration session gives 0 segments', () => {
+      const start = new Date(2026, 10, 8, 10, 0, 0).toISOString();
+      const segs = splitSessionByDay(start, start);
+      return segs.length === 0;
+    });
+
+    test('Edge: job with no periods has jobFirstDay = null', () => {
+      const job = makeJob(14, []);
+      job.periods = [];
+      return jobFirstDay(job) === null;
+    });
+
+    test('Edge: 14h/week Wednesday start gives 8h required for that week (spec check)', () => {
+      // "A 14h/week job resumed on a Wednesday shows 8h required for that week"
+      const job = makeJob(14, [{ start: '2026-11-11', end: null }]); // Wednesday
+      const stats = rangeStats(job, [], '2026-11-08', '2026-11-14', '2026-11-14');
+      return approx(stats.requiredHours, 8);
+    });
+
+    test('Edge: paused after Tuesday → 6h required (Sun–Tue = 3 days)', () => {
+      const job = makeJob(14, [{ start: '2026-11-08', end: '2026-11-10' }]);
+      const stats = rangeStats(job, [], '2026-11-08', '2026-11-14', TODAY);
+      return approx(stats.requiredHours, 6);
+    });
+
+    // ─── Render results ───────────────────────────────────────────────────────
+    const resultsEl = document.getElementById('results');
+    let passed = 0, failed = 0;
+
+    for (const r of results) {
+      const div = document.createElement('div');
+      div.className = `test ${r.pass ? 'pass' : 'fail'}`;
+
+      const label = document.createElement('div');
+      label.className = 'test-label';
+      label.textContent = `${r.pass ? '✓' : '✗'} ${r.name}`;
+
+      div.appendChild(label);
+      if (!r.pass && r.detail) {
+        const detail = document.createElement('div');
+        detail.className = 'test-detail';
+        detail.textContent = r.detail;
+        div.appendChild(detail);
+      }
+
+      resultsEl.appendChild(div);
+      if (r.pass) passed++; else failed++;
+    }
+
+    const summaryEl = document.getElementById('summary');
+    summaryEl.textContent = `${passed} / ${results.length} tests passed${failed > 0 ? ` — ${failed} FAILED` : ' — ALL PASS'}`;
+    summaryEl.classList.add(failed === 0 ? 'all-pass' : 'some-fail');
+  </script>
+</body>
+</html>
+

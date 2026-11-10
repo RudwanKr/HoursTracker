@@ -1,0 +1,38 @@
+/* Design tokens — NEO-BRUTALISM */
+:root {
+  /* Color */
+  --bg: #FFFDF5;
+  --ink: #000000;
+  --paper: #FFFFFF;
+  --yellow: #FFDE59;
+  --pink: #FF90E8;
+  --blue: #8CA9FF;
+  --green: #7CFFB2;
+  --orange: #FF9F43;
+  --red: #FF5C5C;
+
+  /* Borders & shadows */
+  --border: 3px solid var(--ink);
+  --border-thick: 4px solid var(--ink);
+  --shadow: 6px 6px 0 var(--ink);
+  --shadow-sm: 3px 3px 0 var(--ink);
+  --shadow-lg: 10px 10px 0 var(--ink);
+
+  /* Shape */
+  --radius: 0;
+
+  /* Type */
+  --font-display: "Space Grotesk", "Archivo Black", system-ui, sans-serif;
+  --font-body: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, "Courier New", monospace;
+
+  /* Spacing scale */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+}
+
